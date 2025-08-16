@@ -1,0 +1,669 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+/**
+ * AZ Permit Prep – single-file React app
+ * - Study (read) summaries
+ * - Flashcards (Rules & Signs)
+ * - Practice Tests (randomized)
+ * - Progress tracking with localStorage
+ *
+ * NOTE: This is a learner-built study aid. Always verify with the latest
+ * Arizona Driver License Manual & ADOT MVD before testing.
+ */
+
+// ---------- Utilities ----------
+const LS_KEYS = {
+  progress: "az_permit_progress_v1",
+  attempts: "az_permit_attempts_v1",
+};
+
+function clsx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch {}
+  }, [key, val]);
+  return [val, setVal];
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ---------- Content (summaries; NOT official text) ----------
+const STUDY_SECTIONS = [
+  {
+    id: "basics",
+    title: "Permit Basics & Testing",
+    bullets: [
+      "Bring required ID documents; pass vision screening & knowledge test.",
+      "Knowledge test covers: signs, right-of-way, safe driving, Arizona rules.",
+      "Practice hazard awareness: space cushions, scanning, speed & stopping.",
+      "Zero tolerance for DUI under 21; never drive impaired.",
+    ],
+  },
+  {
+    id: "rightofway",
+    title: "Right-of-Way",
+    bullets: [
+      "No one ‘owns’ right‑of‑way; law describes who should yield to prevent crashes.",
+      "At 4‑way stops: first to stop goes first; ties yield to the driver on your right.",
+      "Left turns yield to oncoming traffic; yield to pedestrians in crosswalks.",
+      "Emergency vehicles with lights/sirens: pull to the right and stop.",
+    ],
+  },
+  {
+    id: "speed",
+    title: "Speed, Space & Following Distance",
+    bullets: [
+      "Adjust speed for weather, traffic, and visibility — not just the limit.",
+      "Use the 3‑second rule (more at night/rain). Pick a fixed point to count.",
+      "Leave extra space behind motorcycles, buses, and large trucks.",
+      "School zones: obey posted signs and flashing beacons; expect ~15 mph when active.",
+    ],
+  },
+  {
+    id: "stopping",
+    title: "Stopping & Parking",
+    bullets: [
+      "Stop fully at stop lines before entering crosswalks/intersections.",
+      "Never park in disabled spaces without placard/plate; don’t block fire hydrants.",
+      "On hills: turn wheels to prevent roll — toward curb downhill; away uphill with curb.",
+      "Set parking brake; check mirrors and traffic before opening doors.",
+    ],
+  },
+  {
+    id: "signs",
+    title: "Signs, Signals & Markings",
+    bullets: [
+      "Red = stop/prohibition; Yellow = caution/warning; Orange = work zones.",
+      "Regulatory signs (white/black) state laws (speed, lanes, turns).",
+      "Flashing red = stop; flashing yellow = proceed with caution.",
+      "Solid yellow line = no passing when on your side; double solid = no passing either way.",
+    ],
+  },
+  {
+    id: "safety",
+    title: "Safe Driving & Sharing the Road",
+    bullets: [
+      "Buckle up — driver and all passengers. Secure children in proper restraints.",
+      "Check blind spots; don’t linger in others’ — especially trucks’ ‘No‑Zones’.",
+      "Headlights on from sunset to sunrise and when visibility is poor.",
+      "Don’t drive drowsy/distracted — no texting; set GPS/music before moving.",
+    ],
+  },
+  {
+    id: "workzones",
+    title: "Work Zones & Emergencies",
+    bullets: [
+      "Slow down and follow flaggers; fines are higher in active work zones.",
+      "Move Over: when safe, change lanes or slow for stopped emergency/utility vehicles.",
+      "If involved in a minor crash: move vehicles out of travel lanes if possible.",
+      "Tire blowout: steer straight, ease off gas, let vehicle slow before pulling over.",
+    ],
+  },
+];
+
+// ---------- Flashcards ----------
+const FLASHCARDS = [
+  { q: "4‑way stop: Two cars arrive together from perpendicular streets. Who goes first?", a: "Driver on the right goes first; the other yields." },
+  { q: "Flashing red light means?", a: "Stop completely, then proceed when clear (same as a stop sign)." },
+  { q: "Solid yellow line on your side means?", a: "No passing." },
+  { q: "When must headlights be used?", a: "Sunset to sunrise and when visibility is poor (rain/dust)." },
+  { q: "Minimum following distance in good conditions?", a: "At least 3 seconds — more for heavy vehicles or bad weather." },
+  { q: "School bus with flashing red lights on an undivided roadway?", a: "Stop in both directions until lights stop and stop arm retracts." },
+  { q: "Emergency vehicle with lights/siren approaches behind you.", a: "Signal, pull to the right, and stop until it passes (if safe)." },
+  { q: "What is a ‘No‑Zone’?", a: "Large blind spots around trucks/buses where your car disappears." },
+  { q: "Basic speed law means…", a: "Never drive faster than is safe for current conditions — even if under the posted limit." },
+  { q: "Turning wheels when parking uphill with a curb?", a: "Away from the curb." },
+  { q: "Flashing yellow arrow for a turn means?", a: "Proceed with caution and yield to oncoming traffic/pedestrians." },
+  { q: "What to do at a yield sign?", a: "Slow/stop if needed and allow cross traffic/pedestrians to go first." },
+  { q: "When are you allowed to pass a bicyclist?", a: "Only when safe with plenty of space; change lanes if possible." },
+  { q: "Hands position on the wheel (modern guidance)?", a: "Roughly 9 and 3 o’clock for better control and airbag safety." },
+  { q: "Right turn on red in Arizona?", a: "Allowed after a complete stop unless prohibited; yield to traffic/pedestrians." },
+  { q: "Left turn on red from a one‑way onto a one‑way?", a: "Permitted after stop unless prohibited; yield and ensure it’s safe." },
+  { q: "What increases your stopping distance the most?", a: "Speed — doubling speed roughly quadruples stopping distance." },
+  { q: "What to do in a skid?", a: "Ease off accelerator/brake, steer toward your intended path, don’t overcorrect." },
+  { q: "What’s the ‘Move Over’ law?", a: "Change lanes or slow down for stopped emergency/utility/maintenance vehicles." },
+  { q: "Orange signs mean…", a: "Road work/construction warnings — slow and stay alert." },
+];
+
+// ---------- Signs (minimal primers) ----------
+const SIGNS = [
+  { name: "Stop", type: "Regulatory", desc: "Full stop at the line/crosswalk.", glyph: "🛑" },
+  { name: "Yield", type: "Regulatory", desc: "Slow/stop if needed — let others go first.", glyph: "⚠️" },
+  { name: "Speed Limit", type: "Regulatory", desc: "Maximum lawful speed under ideal conditions.", glyph: "📄" },
+  { name: "No Passing Zone", type: "Warning", desc: "Do not pass in this zone.", glyph: "⛔" },
+  { name: "Railroad Crossing", type: "Warning", desc: "Look, listen, and prepare to stop.", glyph: "🚆" },
+  { name: "School Zone", type: "Warning", desc: "Slow, watch for children and crossing guards.", glyph: "🏫" },
+  { name: "Pedestrian Crossing", type: "Warning", desc: "Yield to people in crosswalk.", glyph: "🚸" },
+  { name: "Work Zone", type: "Warning", desc: "Orange ahead — slow and follow directions.", glyph: "🚧" },
+];
+
+// ---------- Practice Questions (sample — expand anytime) ----------
+const QUESTIONS = [
+  {
+    id: 1,
+    q: "At a 4‑way stop, two vehicles arrive at the same time. Who has the right‑of‑way?",
+    choices: [
+      "The vehicle on the left",
+      "The vehicle on the right",
+      "The larger vehicle",
+      "Whoever signals first",
+    ],
+    answer: 1,
+    expl: "When two vehicles arrive together, the driver on the right goes first.",
+    topic: "Right of Way",
+  },
+  {
+    id: 2,
+    q: "A flashing red traffic signal means:",
+    choices: ["Slow down and proceed", "Stop, then proceed when clear", "Yield only", "Signal and turn right"],
+    answer: 1,
+    expl: "Treat a flashing red like a stop sign.",
+    topic: "Signals",
+  },
+  {
+    id: 3,
+    q: "You should use headlights:",
+    choices: [
+      "Only on highways",
+      "From sunset to sunrise or when visibility is poor",
+      "Only when raining",
+      "Only on rural roads",
+    ],
+    answer: 1,
+    expl: "Use headlights at night and any time you can’t see clearly.",
+    topic: "Safety",
+  },
+  {
+    id: 4,
+    q: "What is the minimum following distance in good conditions?",
+    choices: ["1 second", "2 seconds", "3 seconds or more", "Car‑length rule"],
+    answer: 2,
+    expl: "Use at least the 3‑second rule; increase in bad conditions.",
+    topic: "Space Management",
+  },
+  {
+    id: 5,
+    q: "A school bus is stopped with red lights flashing on an undivided road. You must:",
+    choices: ["Slow and pass carefully", "Stop only if behind it", "Stop in both directions", "Honk and pass"],
+    answer: 2,
+    expl: "All traffic must stop until the lights stop and the stop arm is retracted.",
+    topic: "School Bus",
+  },
+  {
+    id: 6,
+    q: "A solid yellow line on your side of the center line means:",
+    choices: ["Passing allowed", "No passing", "Passing trucks only", "U‑turn required"],
+    answer: 1,
+    expl: "Solid yellow on your side = do not pass.",
+    topic: "Road Markings",
+  },
+  {
+    id: 7,
+    q: "When an emergency vehicle with lights and siren is approaching, you should:",
+    choices: ["Speed up to get out of the way", "Stop in your lane", "Pull to the right and stop", "Turn left and stop"],
+    answer: 2,
+    expl: "Signal and move right when safe, then stop until it passes.",
+    topic: "Emergency Vehicles",
+  },
+  {
+    id: 8,
+    q: "The ‘Move Over’ law requires you to:",
+    choices: [
+      "Stop immediately in the lane",
+      "Change lanes away from stopped emergency/utility vehicles or slow if not possible",
+      "Honk and maintain speed",
+      "Turn on hazard lights",
+    ],
+    answer: 1,
+    expl: "Move over or slow down significantly when passing stopped emergency/utility vehicles.",
+    topic: "Move Over",
+  },
+  {
+    id: 9,
+    q: "On a hill when parking uphill with a curb, turn your front wheels:",
+    choices: ["Toward the curb", "Away from the curb", "Straight", "Doesn’t matter"],
+    answer: 1,
+    expl: "Uphill with curb = away; downhill = toward.",
+    topic: "Parking",
+  },
+  {
+    id: 10,
+    q: "A flashing yellow arrow for a left turn means:",
+    choices: ["Protected turn — oncoming stops", "No turn allowed",
+      "Turn with caution and yield to oncoming traffic/pedestrians",
+      "U‑turn only"],
+    answer: 2,
+    expl: "Proceed with caution and yield; the turn is permissive, not protected.",
+    topic: "Signals",
+  },
+  {
+    id: 11,
+    q: "When driving near a large truck, you should:",
+    choices: ["Ride next to it in the blind spot", "Avoid the No‑Zones and pass quickly", "Follow closely", "Use high beams"],
+    answer: 1,
+    expl: "Stay out of blind spots, don’t linger, and allow extra space.",
+    topic: "Sharing the Road",
+  },
+  {
+    id: 12,
+    q: "Right turn on red in Arizona is:",
+    choices: ["Never allowed", "Allowed after stopping unless prohibited", "Allowed without stopping", "Only at night"],
+    answer: 1,
+    expl: "Stop completely, check for signs prohibiting it, yield, then turn when clear.",
+    topic: "Right on Red",
+  },
+  {
+    id: 13,
+    q: "The basic speed law means you must:",
+    choices: ["Always drive at the limit", "Match surrounding traffic", "Never drive faster than is safe for conditions", "Stay 10 mph under limit"],
+    answer: 2,
+    expl: "Adjust speed for weather, traffic, and visibility.",
+    topic: "Speed/Conditions",
+  },
+  {
+    id: 14,
+    q: "If your vehicle begins to skid, you should:",
+    choices: ["Brake hard immediately", "Steer toward your intended path and ease off pedals", "Accelerate", "Turn opposite of the skid wildly"],
+    answer: 1,
+    expl: "Look and steer where you want to go; don’t slam brakes.",
+    topic: "Skids",
+  },
+  {
+    id: 15,
+    q: "Double solid yellow centerlines mean:",
+    choices: ["Passing allowed both ways", "Passing allowed one way", "No passing either direction", "Passing motorcycles only"],
+    answer: 2,
+    expl: "No passing in either direction.",
+    topic: "Markings",
+  },
+  {
+    id: 16,
+    q: "When approaching a railroad crossing with no signals and you cannot see the tracks for 400 feet, you should:",
+    choices: ["Speed up and cross quickly", "Stop, look, listen, and proceed when safe", "Honk and drive through", "Turn around"],
+    answer: 1,
+    expl: "Be prepared to stop and only cross when you are sure it’s clear.",
+    topic: "Railroad",
+  },
+  {
+    id: 17,
+    q: "In a roundabout, you should enter:",
+    choices: ["Without yielding", "After stopping no matter what", "When there is a safe gap; yield to traffic in the circle", "Only if turning left"],
+    answer: 2,
+    expl: "Yield to circulating traffic and pedestrians; travel counter‑clockwise.",
+    topic: "Roundabouts",
+  },
+  {
+    id: 18,
+    q: "When approaching an active work zone you must:",
+    choices: ["Maintain speed", "Slow down and follow flaggers and signs", "Pass the flagger", "Stop and wait for police"],
+    answer: 1,
+    expl: "Orange signs = construction; reduce speed and follow directions.",
+    topic: "Work Zones",
+  },
+  {
+    id: 19,
+    q: "Left turn on red from a one‑way street onto a one‑way street is:",
+    choices: ["Always illegal", "Allowed after stopping unless prohibited", "Only with a green arrow", "Only during daylight"],
+    answer: 1,
+    expl: "After a complete stop and if no sign prohibits it; yield first.",
+    topic: "Left on Red",
+  },
+  {
+    id: 20,
+    q: "You’re being tailgated. What’s the best response?",
+    choices: ["Brake‑check them", "Increase following distance ahead and change lanes when safe", "Speed up a lot", "Ignore it"],
+    answer: 1,
+    expl: "Create more space ahead; let them pass when possible.",
+    topic: "Space Management",
+  },
+  {
+    id: 21,
+    q: "Seat belts should be worn by:",
+    choices: ["Only the driver", "Front passengers only", "Everyone in the vehicle", "Only on highways"],
+    answer: 2,
+    expl: "Seat belts save lives — buckle everyone.",
+    topic: "Safety",
+  },
+  {
+    id: 22,
+    q: "A flashing yellow signal means:",
+    choices: ["Stop", "Proceed with caution", "Speed up", "Turn only"],
+    answer: 1,
+    expl: "Slow and proceed carefully, yielding as needed.",
+    topic: "Signals",
+  },
+  {
+    id: 23,
+    q: "When backing up, you should:",
+    choices: ["Rely only on mirrors", "Turn your head and look through the rear window while moving slowly", "Back quickly", "Open your door"],
+    answer: 1,
+    expl: "Do a 360° check; back slowly while looking through the rear window.",
+    topic: "Backing",
+  },
+  {
+    id: 24,
+    q: "If a tire blows out, you should:",
+    choices: ["Brake hard immediately", "Grip the wheel, ease off gas, and steer straight to slow down", "Accelerate to keep control", "Turn sharply off the road"],
+    answer: 1,
+    expl: "Let the vehicle slow under control before pulling over.",
+    topic: "Emergencies",
+  },
+  {
+    id: 25,
+    q: "You may not park:",
+    choices: ["Next to a curb uphill", "Within an intersection or in front of a driveway", "On the right side of a two‑way street", "In a legal parking zone"],
+    answer: 1,
+    expl: "Don’t block driveways/intersections; follow posted restrictions.",
+    topic: "Parking",
+  },
+];
+
+// ---------- Components ----------
+function Header({ active, setActive }) {
+  const tabs = [
+    { id: "read", label: "Read" },
+    { id: "flash", label: "Flashcards" },
+    { id: "signs", label: "Road Signs" },
+    { id: "quiz", label: "Practice Test" },
+    { id: "progress", label: "Progress" },
+  ];
+  return (
+    <div className="sticky top-0 z-50 backdrop-blur bg-white/70 border-b">
+      <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="text-xl md:text-2xl font-bold tracking-tight">AZ Permit Prep</div>
+        <nav className="flex gap-2 text-sm">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActive(t.id)}
+              className={clsx(
+                "px-3 py-1.5 rounded-full border",
+                active === t.id ? "bg-black text-white border-black" : "hover:bg-gray-100"
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+function StudySection({ section, onComplete }) {
+  const [done, setDone] = useState(false);
+  return (
+    <div className="bg-white rounded-2xl shadow p-5">
+      <h3 className="text-lg font-semibold mb-2">{section.title}</h3>
+      <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
+        {section.bullets.map((b, i) => (
+          <li key={i}>{b}</li>
+        ))}
+      </ul>
+      <div className="mt-4 flex gap-3">
+        <button
+          onClick={() => {
+            setDone(true);
+            onComplete?.(section.id);
+          }}
+          className="px-4 py-2 rounded-xl bg-black text-white"
+        >
+          Mark Reviewed
+        </button>
+        {done && <span className="text-xs text-green-700">Saved ✔</span>}
+      </div>
+    </div>
+  );
+}
+
+function ReadView({ onSectionComplete }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {STUDY_SECTIONS.map((sec) => (
+        <StudySection key={sec.id} section={sec} onComplete={onSectionComplete} />
+      ))}
+    </div>
+  );
+}
+
+function FlashcardsView({ cards, onFlip }) {
+  const [i, setI] = useState(0);
+  const [showA, setShowA] = useState(false);
+  const next = () => {
+    setShowA(false);
+    setI((v) => (v + 1) % cards.length);
+  };
+  const prev = () => {
+    setShowA(false);
+    setI((v) => (v - 1 + cards.length) % cards.length);
+  };
+  const c = cards[i];
+  return (
+    <div className="max-w-xl mx-auto text-center">
+      <div className="bg-white rounded-2xl shadow p-6 min-h-[180px] flex flex-col justify-center">
+        <div className="text-sm uppercase tracking-wide text-gray-500">Flashcard {i + 1} / {cards.length}</div>
+        <div className="text-lg mt-2">{showA ? c.a : c.q}</div>
+      </div>
+      <div className="flex justify-center gap-3 mt-4">
+        <button onClick={prev} className="px-4 py-2 rounded-xl border">Prev</button>
+        <button onClick={() => { setShowA(!showA); onFlip?.(); }} className="px-4 py-2 rounded-xl bg-black text-white">
+          {showA ? "Show Question" : "Show Answer"}
+        </button>
+        <button onClick={next} className="px-4 py-2 rounded-xl border">Next</button>
+      </div>
+    </div>
+  );
+}
+
+function SignsView() {
+  const [filter, setFilter] = useState("");
+  const filtered = useMemo(() => SIGNS.filter(s => {
+    const t = (s.name + s.type + s.desc).toLowerCase();
+    return t.includes(filter.toLowerCase());
+  }), [filter]);
+
+  return (
+    <div>
+      <div className="mb-3 flex gap-2">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search signs…"
+          className="w-full border rounded-xl px-3 py-2"
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {filtered.map((s, idx) => (
+          <div key={idx} className="bg-white rounded-2xl shadow p-4 flex items-start gap-3">
+            <div className="text-3xl" aria-hidden>{s.glyph}</div>
+            <div>
+              <div className="font-semibold">{s.name}</div>
+              <div className="text-xs text-gray-500">{s.type}</div>
+              <div className="text-sm mt-1 text-gray-700">{s.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuizView({ onCompleted }) {
+  const [numQ, setNumQ] = useState(15);
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [done, setDone] = useState(false);
+  const [score, setScore] = useState(0);
+
+  useEffect(() => {
+    setQuestions(shuffle(QUESTIONS).slice(0, numQ));
+    setAnswers({});
+    setDone(false);
+    setScore(0);
+  }, [numQ]);
+
+  const select = (qid, idx) => setAnswers((a) => ({ ...a, [qid]: idx }));
+
+  const submit = () => {
+    let s = 0;
+    for (const q of questions) {
+      if (answers[q.id] === q.answer) s++;
+    }
+    setScore(s);
+    setDone(true);
+    onCompleted?.({ score: s, total: questions.length, when: Date.now() });
+  };
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-3">
+        <label className="text-sm">Number of questions:</label>
+        <select value={numQ} onChange={(e) => setNumQ(parseInt(e.target.value))} className="border rounded-xl px-2 py-1">
+          {[10, 15, 20, 25].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <button onClick={() => setQuestions(shuffle(QUESTIONS).slice(0, numQ))} className="ml-auto px-3 py-1.5 rounded-xl border">New Set</button>
+      </div>
+
+      <div className="space-y-4">
+        {questions.map((q, i) => (
+          <div key={q.id} className="bg-white rounded-2xl shadow p-4">
+            <div className="text-sm text-gray-500 mb-1">Question {i + 1} of {questions.length} • {q.topic}</div>
+            <div className="font-medium mb-2">{q.q}</div>
+            <div className="grid gap-2">
+              {q.choices.map((c, idx) => {
+                const picked = answers[q.id] === idx;
+                const correct = done && idx === q.answer;
+                const wrong = done && picked && idx !== q.answer;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => select(q.id, idx)}
+                    disabled={done}
+                    className={clsx(
+                      "text-left px-3 py-2 rounded-xl border",
+                      picked && !done && "border-black",
+                      correct && "bg-green-50 border-green-600",
+                      wrong && "bg-red-50 border-red-500"
+                    )}
+                  >
+                    {String.fromCharCode(65 + idx)}. {c}
+                  </button>
+                );
+              })}
+            </div>
+            {done && (
+              <div className="mt-3 text-sm text-gray-700">
+                <div className="font-medium">Explanation:</div>
+                <div>{q.expl}</div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {!done ? (
+        <button onClick={submit} className="mt-4 px-4 py-2 rounded-xl bg-black text-white">Submit</button>
+      ) : (
+        <div className="mt-4 bg-white rounded-2xl shadow p-4 flex items-center justify-between">
+          <div>
+            <div className="text-lg font-semibold">Score: {score} / {questions.length}</div>
+            <div className="text-sm text-gray-600">Review explanations above, then try a new set.</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setDone(false); setAnswers({}); }} className="px-3 py-2 rounded-xl border">Change Answers</button>
+            <button onClick={() => { setQuestions(shuffle(QUESTIONS).slice(0, numQ)); setAnswers({}); setDone(false); setScore(0); }} className="px-3 py-2 rounded-xl bg-black text-white">New Quiz</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProgressView({ progress, attempts, resetAll }) {
+  const reviewedCount = Object.keys(progress.reviewed || {}).length;
+  const flips = progress.flips || 0;
+  const best = attempts.reduce((m, a) => Math.max(m, a.score / a.total), 0);
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="bg-white rounded-2xl shadow p-5">
+        <div className="text-sm text-gray-500">Study Progress</div>
+        <div className="text-3xl font-bold mt-1">{reviewedCount} / {STUDY_SECTIONS.length} sections reviewed</div>
+        <div className="text-sm text-gray-600 mt-2">Flashcards flipped: {flips}</div>
+      </div>
+      <div className="bg-white rounded-2xl shadow p-5">
+        <div className="text-sm text-gray-500">Practice Tests</div>
+        {attempts.length === 0 ? (
+          <div className="text-sm text-gray-600">No attempts yet — take a quiz!</div>
+        ) : (
+          <ul className="space-y-2 max-h-60 overflow-auto">
+            {attempts.map((a, i) => (
+              <li key={i} className="flex items-center justify-between border rounded-xl px-3 py-2">
+                <span className="text-sm">Attempt {i + 1} • {new Date(a.when).toLocaleString()}</span>
+                <span className="font-medium">{a.score}/{a.total} ({Math.round((a.score/a.total)*100)}%)</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="text-sm text-gray-600 mt-3">Best score: {Math.round(best * 100)}%</div>
+      </div>
+      <div className="md:col-span-2 flex items-center justify-between">
+        <div className="text-xs text-gray-500">Tip: Aim for consistent 85–90%+ before test day.</div>
+        <button onClick={resetAll} className="px-3 py-2 rounded-xl border">Reset Progress</button>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [active, setActive] = useState("read");
+  const [progress, setProgress] = useLocalStorage(LS_KEYS.progress, { reviewed: {}, flips: 0 });
+  const [attempts, setAttempts] = useLocalStorage(LS_KEYS.attempts, []);
+
+  const markReviewed = (id) => setProgress((p) => ({ ...p, reviewed: { ...p.reviewed, [id]: true } }));
+  const onFlip = () => setProgress((p) => ({ ...p, flips: (p.flips || 0) + 1 }));
+  const onQuizDone = (result) => setAttempts((a) => [result, ...a].slice(0, 50));
+  const resetAll = () => { localStorage.removeItem(LS_KEYS.progress); localStorage.removeItem(LS_KEYS.attempts); window.location.reload(); };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900">
+      <Header active={active} setActive={setActive} />
+
+      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+        <section className="bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-2xl">
+          <div className="font-semibold">Heads‑up</div>
+          <div className="text-sm">This is a study aid based on general safe‑driving principles. For the permit exam, always review the latest official Arizona Driver License Manual and ADOT MVD guidance.</div>
+        </section>
+
+        {active === "read" && <ReadView onSectionComplete={markReviewed} />}
+        {active === "flash" && <FlashcardsView cards={FLASHCARDS} onFlip={onFlip} />}
+        {active === "signs" && <SignsView />}
+        {active === "quiz" && <QuizView onCompleted={onQuizDone} />}
+        {active === "progress" && <ProgressView progress={progress} attempts={attempts} resetAll={resetAll} />}
+
+        <footer className="pt-8 pb-12 text-center text-xs text-gray-500">
+          <div>Built for AZ permit practice • You’ve got this 🚗</div>
+        </footer>
+      </main>
+    </div>
+  );
+}
